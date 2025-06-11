@@ -1,10 +1,15 @@
+use aes::Aes128;
+use aes::{cipher::KeyInit, cipher::generic_array::GenericArray};
 use colored::*;
+use rand::RngCore;
+use std::env;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::time::Instant;
+use xts_mode::{Xts128, get_tweak_default};
 
 const BLKGETSIZE64: u64 = 0x80081272;
 const MIN_BLOCK_SIZE: u64 = 1 * 1024 * 1024; // 1 MB
@@ -172,6 +177,80 @@ fn main() -> io::Result<()> {
         );
     }
 
+    // generate random key
+    let mut key = [0u8; 32]; // 2 * 128 bits for XTS
+    if let Some(ref key_bytes) = arg_key_binary {
+        key.copy_from_slice(&key_bytes[..]);
+    } else {
+        rand::rng().fill_bytes(&mut key);
+    }
+    if arg_write {
+        // key is only important if write is enabled
+        print!("  Key .......: ");
+        for (i, byte) in key.iter().enumerate() {
+            if i > 0 && i % 4 == 0 {
+                print!("{}", "-".bright_cyan());
+            }
+            if arg_key.is_some() {
+                print!("{}", format!("{:02x}", byte).bright_yellow());
+            } else {
+                print!("{}", format!("{:02x}", byte).bright_cyan());
+            }
+        }
+        println!();
+        println!();
+    }
+
+    // setup XTS (//https://docs.rs/xts-mode/latest/xts_mode/)
+    let cipher_1 = Aes128::new(GenericArray::from_slice(&key[..16]));
+    let cipher_2 = Aes128::new(GenericArray::from_slice(&key[16..]));
+    let xts = Xts128::<Aes128>::new(cipher_1, cipher_2);
+
+    // write bytes
+    if arg_write {
+        let mut file = File::options().read(true).write(arg_write).open(&path)?;
+
+        // write each block
+        let overall_start_time = Instant::now();
+        for block_index in start_block..block_count {
+            let (start, end) = get_block_offset(disk_size, block_size, block_index)?;
+
+            let mut buffer_write = vec![0u8; block_size as usize];
+            xts.encrypt_area(&mut buffer_write, block_size as usize, 0, get_tweak_default);
+
+            let to_write = (end - start + 1) as usize;
+            let instant_start_time = Instant::now();
+            file.write_all(&buffer_write[..to_write])?;
+            let instant_elapsed = instant_start_time.elapsed();
+            let overall_elapsed = overall_start_time.elapsed();
+
+            let instant_seconds = instant_elapsed.as_secs_f64();
+            let instant_speed = if instant_seconds > 0.0 {
+                (end - start + 1) as f64 / instant_seconds / 1024.0 / 1024.0
+            } else {
+                0.0
+            };
+
+            let overall_seconds = overall_elapsed.as_secs_f64();
+            let overall_speed = if instant_seconds > 0.0 {
+                (end + 1) as f64 / overall_seconds / 1024.0 / 1024.0
+            } else {
+                0.0
+            };
+
+            print!(
+                "\r\x1b[2K{}% (wrote {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
+                100 * (end + 1) / disk_size,
+                end + 1,
+                instant_speed,
+                overall_speed,
+            );
+            io::stdout().flush().unwrap();
+        }
+
+        println!();
+    }
+
     // go over each block
     let mut file = File::open(&path)?;
     let mut buffer_data = vec![0u8; block_size as usize];
@@ -191,6 +270,21 @@ fn main() -> io::Result<()> {
         } else {
             0.0
         };
+
+        if arg_write {
+            xts.decrypt_area(&mut buffer_data, block_size as usize, 0, get_tweak_default);
+            for (i, &b) in buffer_data[..to_read].iter().enumerate() {
+                if b != 0 {
+                    eprintln!(
+                        "{}",
+                        format!("Validation failed at byte offset {}!", start + i as u64)
+                            .bright_red()
+                    );
+                    std::process::exit(2);
+                }
+            }
+        }
+
         let overall_seconds = overall_elapsed.as_secs_f64();
         let overall_speed = if instant_seconds > 0.0 {
             (end + 1) as f64 / overall_seconds / 1024.0 / 1024.0
@@ -208,6 +302,16 @@ fn main() -> io::Result<()> {
         io::stdout().flush().unwrap();
     }
 
+    println!();
+    println!();
+    if arg_write {
+        println!(
+            "{}",
+            "Read/write test was completed successfully".bright_green()
+        );
+    } else {
+        println!("{}", "Read test was completed successfully".bright_green());
+    }
     Ok(())
 }
 

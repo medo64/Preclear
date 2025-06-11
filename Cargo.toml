@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes = "0.8.4"
 colored = "3.0.0"
+hex = "0.4.3"
 libc = "0.2.172"
+rand = "0.9.1"
+xts-mode = "0.5.1"
