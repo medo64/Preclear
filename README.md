@@ -22,6 +22,13 @@ Reads and (optionally) writes bytes to disk in order to find any errors.
 * `-v`: More details
 
 
+### Exit Coes
+
+* `0`: all ok
+* `1`: argument error
+* `2`: validation error
+
+
 ### Examples
 
 Write and verify (recommended, but destructible):

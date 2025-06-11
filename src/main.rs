@@ -1,3 +1,4 @@
+use colored::*;
 use std::fs::File;
 use std::io;
 use std::io::Read;
@@ -10,40 +11,177 @@ const MIN_BLOCK_SIZE: u64 = 1 * 1024 * 1024; // 1 MB
 const MAX_BLOCK_SIZE: u64 = 128 * 1024 * 1024; // 128 MB
 
 fn main() -> io::Result<()> {
-    let path = "/dev/sda";
-    //let path = "research/100M.bin";
+    let mut arg_key: Option<String> = None;
+    let mut arg_verbose = false;
+    let mut arg_write = false;
+    let mut arg_start_at = 0u64;
+    let mut arg_block_size = 0u64;
+    let mut arg_path: Option<String> = None;
 
-    let (disk_size, sector_size) = get_size(path)?;
+    let args: Vec<String> = env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-b" => {
+                if i + 1 < args.len() {
+                    arg_block_size = args[i + 1].parse::<u64>().unwrap_or_else(|_| {
+                        eprintln!(
+                            "{}",
+                            "Error: block size requires a valid integer argument!".bright_red()
+                        );
+                        std::process::exit(1);
+                    });
+                    if arg_block_size < 16 {
+                        eprintln!(
+                            "{}",
+                            "Error: block size must be equal or larger than 16 bytes!".bright_red()
+                        );
+                        std::process::exit(1);
+                    } else if arg_block_size % 16 != 0 {
+                        eprintln!(
+                            "{}",
+                            "Error: block size must be a multiple of 16!".bright_red()
+                        );
+                        std::process::exit(1);
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("{}", "Error: block size requires an argument!".bright_red());
+                    std::process::exit(1);
+                }
+            }
+            "-k" => {
+                if i + 1 < args.len() {
+                    arg_key = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("{}", "Error: key requires an argument!".bright_red());
+                    std::process::exit(1);
+                }
+            }
+            "-s" => {
+                if i + 1 < args.len() {
+                    arg_start_at = args[i + 1].parse::<u64>().unwrap_or_else(|_| {
+                        eprintln!(
+                            "{}",
+                            "Error: start position requires a valid integer argument!".bright_red()
+                        );
+                        std::process::exit(1);
+                    });
+                    i += 1;
+                } else {
+                    eprintln!(
+                        "{}",
+                        "Error: start position requires an argument!".bright_red()
+                    );
+                    std::process::exit(1);
+                }
+            }
+            "-v" => {
+                arg_verbose = true;
+            }
+            "-w" => {
+                arg_write = true;
+            }
+            _ => {
+                if arg_path.is_some() {
+                    eprintln!(
+                        "{}",
+                        "Error: only one file allowed as an argument!".bright_red()
+                    );
+                }
+                arg_path = Some(args[i].clone());
+            }
+        }
+        i += 1;
+    }
 
-    println!("Disk: {}", path);
-    println!("  Disk size .: {}", disk_size);
-    println!("  Sector size: {}", sector_size);
-    println!("");
+    let arg_key_binary = if let Some(ref key_str) = arg_key {
+        let key_str_clean: String = key_str.chars().filter(|c| *c != '-').collect();
+        let key_bytes = match hex::decode(&key_str_clean) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("{}", format!("Error parsing hex key: {}!", e).bright_red());
+                std::process::exit(1);
+            }
+        };
+        if key_bytes.len() != 32 {
+            eprintln!("{}", "Key must be 64 hex characters!".bright_red());
+            std::process::exit(1);
+        }
+        Some(key_bytes)
+    } else {
+        None
+    };
+
+    if arg_path.is_none() {
+        eprintln!("{}", "Error: no file configured!".bright_red());
+    }
+
+    //let path = "/dev/sda";
+    let path = arg_path.unwrap();
+    let (disk_size, sector_size) = get_size(&path)?;
+
+    println!("Disk: {}", path.bright_cyan());
+    println!("  Disk size .: {}", format!("{}", disk_size).bright_cyan());
+    println!(
+        "  Sector size: {}",
+        format!("{}", sector_size).bright_cyan()
+    );
+    println!();
 
     // figure out block size and count
     let sector_size_effective = if sector_size == 0 { 512 } else { sector_size };
-    let block_size = disk_size / 1000 / sector_size_effective as u64 * sector_size_effective as u64; // divide in 1000 parts by default
-    let block_size = if block_size < MIN_BLOCK_SIZE {
-        MIN_BLOCK_SIZE
-    } else if block_size > MAX_BLOCK_SIZE {
-        MAX_BLOCK_SIZE
+    let block_size = if arg_block_size > 0 {
+        arg_block_size
     } else {
-        block_size
+        let block_size_init =
+            disk_size / 1000 / sector_size_effective as u64 * sector_size_effective as u64; // divide in 1000 parts by default
+        if block_size_init < MIN_BLOCK_SIZE {
+            MIN_BLOCK_SIZE
+        } else if block_size_init > MAX_BLOCK_SIZE {
+            MAX_BLOCK_SIZE
+        } else {
+            block_size_init
+        }
     };
     let block_count = get_block_count(disk_size, block_size);
 
-    // per-file variable
-    let mut file = File::open(path)?;
-    let mut buffer_in = vec![0u8; block_size as usize];
+    // verbose details
+    if arg_verbose {
+        println!(
+            "  Block count: {}",
+            format!("{}", block_count).bright_cyan()
+        );
+        println!("  Block size : {}", format!("{}", block_size).bright_cyan());
+        if !arg_write {
+            println!(); // extra spacing since key is not displayed
+        }
+    }
+
+    // adjust start index
+    if arg_start_at >= disk_size {
+        eprintln!("{}", "Error: start_at is beyond disk size!".bright_red());
+        std::process::exit(1);
+    }
+    let start_block = arg_start_at / block_size;
+    if start_block > 0 {
+        println!(
+            "  Start at ..: {}",
+            format!("{}", start_block * block_size).bright_yellow()
+        );
+    }
 
     // go over each block
+    let mut file = File::open(&path)?;
+    let mut buffer_data = vec![0u8; block_size as usize];
     let overall_start_time = Instant::now();
-    for block_index in 0..block_count {
+    for block_index in start_block..block_count {
         let (start, end) = get_block_offset(disk_size, block_size, block_index)?;
 
         let to_read = (end - start + 1) as usize;
         let instant_start_time = Instant::now();
-        file.read_exact(&mut buffer_in[..to_read])?;
+        file.read_exact(&mut buffer_data[..to_read])?;
         let instant_elapsed = instant_start_time.elapsed();
         let overall_elapsed = overall_start_time.elapsed();
 
@@ -61,10 +199,9 @@ fn main() -> io::Result<()> {
         };
 
         print!(
-            "\r\x1b[2K{}% ({}-{}, {:.2} MB/s, {:.2} MB/s overall)",
+            "\r\x1b[2K{}% (read {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
             100 * (end + 1) / disk_size,
-            start,
-            end,
+            end + 1,
             instant_speed,
             overall_speed,
         );
