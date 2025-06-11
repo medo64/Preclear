@@ -1,0 +1,10 @@
+Package:        preclear
+Version:        <DEB_VERSION>
+Architecture:   <DEB_ARCHITECTURE>
+Maintainer:     Josip Medved <jmedved@jmedved.com>
+Homepage:       https://www.medo64.com/preclear/
+Description:    Disk pre-clear tool
+ Small utility allowing for reading and writing of every byte on a disk for verification purposes.
+Section:        utils
+Priority:       optional
+Depends:        debconf, gnupg2, libc6

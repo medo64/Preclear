@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+# Add /usr/bin/ link
+ln -s /opt/preclear/preclear /usr/bin/preclear 2>/dev/null || true
+
+# Update man pages
+mandb -q
+
+# Just loading to suppress warning
+. /usr/share/debconf/confmodule || true
+
+# Done
+exit 0

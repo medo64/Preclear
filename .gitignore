@@ -1,7 +1,10 @@
 #~ Rust Project
 
 /bin/
+/build/
+/dist/
 /research/
 /target/
 
 TODO.md
+.meta.*

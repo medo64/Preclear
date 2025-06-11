@@ -20,6 +20,8 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  run        Run the project"
     echo "  debug      Compile in debug mode"
     echo "  release    Compile in release mode"
+    echo "  package    Package the project"
+    echo "  publish    Publish the project"
     echo
     echo "Actions with '~' prefix are negated"
     echo
@@ -86,10 +88,65 @@ echo "${ANSI_PURPLE}Assembly version ....: ${ANSI_MAGENTA}$ASSEMBLY_VERSION${ANS
 echo "${ANSI_PURPLE}Assembly version text: ${ANSI_MAGENTA}$ASSEMBLY_VERSION_TEXT${ANSI_RESET}"
 
 
+PACKAGE_LINUX_DEB=$( cat "$SCRIPT_DIR/.meta" | grep -E "^PACKAGE_LINUX_DEB:" | sed  -n 1p | cut -d: -sf2- | xargs )
+if [ "$PACKAGE_LINUX_DEB" = "" ]; then  # auto-detect
+    if [ -d "$SCRIPT_DIR/packaging/linux-deb" ]; then
+        PACKAGE_LINUX_DEB=$PROJECT_NAME
+    fi
+fi
+if [ "$PACKAGE_LINUX_DEB" != "" ]; then
+    echo "${ANSI_PURPLE}Debian package ......: ${ANSI_MAGENTA}$PACKAGE_LINUX_DEB${ANSI_RESET}"
+
+    PUBLISH_LINUX_DEB=$( cat "$SCRIPT_DIR/.meta.private" 2>/dev/null | grep -E "^PUBLISH_LINUX_DEB:" | sed  -n 1p | cut -d: -sf2- | xargs )
+    if [ "$PUBLISH_LINUX_DEB" = "" ]; then
+        echo "${ANSI_PURPLE}Debian package remote: ${ANSI_YELLOW}(not configured)${ANSI_RESET}" >&2
+    else
+        echo "${ANSI_PURPLE}Debian package remote: ${ANSI_MAGENTA}$PUBLISH_LINUX_APPIMAGE${ANSI_RESET}"
+    fi
+fi
+
+
 prereq_compile() {
     if ! command -v cargo >/dev/null; then
         echo "${ANSI_RED}Missing cargo command${ANSI_RESET}" >&2
         exit 113
+    fi
+}
+
+prereq_package() {
+    if [ "$PACKAGE_LINUX_DEB" != "" ]; then
+        if ! [ -d "$SCRIPT_DIR/packaging/linux-deb" ]; then
+            echo "${ANSI_RED}Missing linux-deb directory${ANSI_RESET}" >&2
+            exit 113
+        fi
+        # if ! [ -e "$SCRIPT_DIR/packaging/linux-deb/usr/share/applications"/*.desktop ]; then
+        #     echo "${ANSI_RED}Missing desktip file${ANSI_RESET}" >&2
+        #     exit 113
+        # fi
+        # if ! [ -e "$SCRIPT_DIR/packaging/linux-deb/usr/share/icons/hicolor/128x128/apps"/*.png ]; then
+        #     echo "${ANSI_RED}Missing icon files${ANSI_RESET}" >&2
+        #     exit 113
+        # fi
+        if ! command -v dpkg-deb >/dev/null; then
+            echo "${ANSI_RED}Missing dpkg-deb command (dpkg-deb package)${ANSI_RESET}" >&2
+            exit 113
+        fi
+        if ! command -v fakeroot >/dev/null; then
+            echo "${ANSI_RED}Missing fakeroot command${ANSI_RESET}" >&2
+            exit 113
+        fi
+        if ! command -v gzip >/dev/null; then
+            echo "${ANSI_RED}Missing gzip command${ANSI_RESET}" >&2
+            exit 113
+        fi
+        if ! command -v lintian >/dev/null; then
+            echo "${ANSI_RED}Missing lintian command (lintian package)${ANSI_RESET}" >&2
+            exit 113
+        fi
+        if ! command -v strip >/dev/null; then
+            echo "${ANSI_RED}Missing strip command${ANSI_RESET}" >&2
+            exit 113
+        fi
     fi
 }
 
@@ -101,8 +158,10 @@ make_clean() {
     echo
 
     find "$SCRIPT_DIR/bin" -mindepth 1 -delete 2>/dev/null || true
+    find "$SCRIPT_DIR/build" -mindepth 1 -delete 2>/dev/null || true
     find "$SCRIPT_DIR/target" -mindepth 1 -delete 2>/dev/null || true
     rmdir "$SCRIPT_DIR/bin" 2>/dev/null || true
+    rmdir "$SCRIPT_DIR/build" 2>/dev/null || true
     rmdir "$SCRIPT_DIR/target" 2>/dev/null || true
 }
 
@@ -147,28 +206,147 @@ make_release() {
     echo
 }
 
+make_package() {
+    echo
+    echo "${ANSI_MAGENTA}┏━━━━━━━━━┓${ANSI_RESET}"
+    echo "${ANSI_MAGENTA}┃ PACKAGE ┃${ANSI_RESET}"
+    echo "${ANSI_MAGENTA}┗━━━━━━━━━┛${ANSI_RESET}"
+    echo
+
+    ANYTHING_DONE=0
+    PROJECT_NAME_LOWER="$(echo $PROJECT_NAME | tr [:upper:] [:lower:])"
+
+    ANYTHING_DONE=1
+    echo "${ANSI_MAGENTA}archive${ANSI_RESET}"
+
+    mkdir -p "$SCRIPT_DIR/build/archive"
+    find "$SCRIPT_DIR/build/archive" -mindepth 1 -delete
+
+    rsync -a "$SCRIPT_DIR/bin/" "$SCRIPT_DIR/build/archive/" || exit 113
+
+    mkdir -p "dist"
+
+    ARCHIVE_NAME_CURR="$PROJECT_NAME_LOWER-$ASSEMBLY_VERSION_TEXT.tgz"
+    rm "dist/$ARCHIVE_NAME_CURR" 2>/dev/null
+
+    tar czvf "dist/$ARCHIVE_NAME_CURR" -C "$SCRIPT_DIR/build/archive" . || exit 113
+
+    echo "${ANSI_CYAN}dist/$ARCHIVE_NAME_CURR${ANSI_RESET}"
+    echo
+
+    if [ "$PACKAGE_LINUX_DEB" != "" ]; then
+        DEB_ARCHITECTURE=amd64
+
+        ANYTHING_DONE=1
+        echo "${ANSI_MAGENTA}deb ($DEB_ARCHITECTURE)${ANSI_RESET}"
+
+        if [ "$GIT_VERSION" != "" ]; then
+            DEB_VERSION=$GIT_VERSION
+            DEB_PACKAGE_NAME="${PROJECT_NAME_LOWER}_${ASSEMBLY_VERSION_TEXT}_${DEB_ARCHITECTURE}"
+        else
+            DEB_VERSION=0.0.0
+            DEB_PACKAGE_NAME="${PROJECT_NAME_LOWER}_${ASSEMBLY_VERSION_TEXT}_${DEB_ARCHITECTURE}"
+        fi
+
+        mkdir -p "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME"
+        find "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/" -mindepth 1 -delete
+
+        rsync -a "$SCRIPT_DIR/packaging/linux-deb/DEBIAN/" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN/" || exit 113
+        sed -i "s/<DEB_VERSION>/$DEB_VERSION/" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN/control" || exit 113
+        sed -i "s/<DEB_ARCHITECTURE>/amd64/" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN/control" || exit 113
+
+        if [ -e "$SCRIPT_DIR/packaging/linux-deb/usr" ]; then
+            rsync -a "$SCRIPT_DIR/packaging/linux-deb/usr/" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/usr/" || exit 113
+        fi
+
+        mkdir -p  "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/opt/$PROJECT_NAME_LOWER/"
+        rsync -a "$SCRIPT_DIR/bin/" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/opt/$PROJECT_NAME_LOWER/" || exit 113
+
+        if [ -e "$SCRIPT_DIR/packaging/linux-deb/copyright" ]; then
+            mkdir -p "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/usr/share/doc/$PROJECT_NAME_LOWER/"
+            cp "$SCRIPT_DIR/packaging/linux-deb/copyright" "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/usr/share/doc/$PROJECT_NAME_LOWER/copyright" || exit 113
+        fi
+
+        find "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/" -type d -exec chmod 755 {} + || exit 113
+        find "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/" -type f -exec chmod 644 {} + || exit 113
+        find "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/opt/" -type f -name "$PROJECT_NAME_LOWER" -exec chmod 755 {} + || exit 113
+        chmod 755 "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN"/config || exit 113
+        chmod 755 "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN"/p*inst || exit 113
+        chmod 755 "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/DEBIAN"/p*rm || exit 113
+
+        fakeroot dpkg-deb -Z gzip --build "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME/" > /dev/null || exit 113
+        mv "$SCRIPT_DIR/build/$DEB_PACKAGE_NAME.deb" "dist/$DEB_PACKAGE_NAME.deb" || exit 113
+        lintian --suppress-tags dir-or-file-in-opt,embedded-library "dist/$DEB_PACKAGE_NAME.deb"
+
+        DEB_PACKAGE_AMD64=$DEB_PACKAGE_NAME.deb
+
+        echo "${ANSI_CYAN}dist/$DEB_PACKAGE_NAME.deb${ANSI_RESET}"
+        echo
+    fi
+
+    if [ "$ANYTHING_DONE" -eq 0 ]; then
+        echo "${ANSI_RED}Nothing to package${ANSI_RESET}" >&2
+        exit 113
+    fi
+}
+
+make_publish() {
+    echo
+    echo "${ANSI_MAGENTA}┏━━━━━━━━━┓${ANSI_RESET}"
+    echo "${ANSI_MAGENTA}┃ PUBLISH ┃${ANSI_RESET}"
+    echo "${ANSI_MAGENTA}┗━━━━━━━━━┛${ANSI_RESET}"
+    echo
+
+    ANYTHING_DONE=0
+
+    if [ "$PUBLISH_LINUX_DEB" != "" ]; then
+        DEB_ARCHITECTURE=amd64
+        DEB_PACKAGE_CURR=$DEB_PACKAGE_AMD64
+
+        ANYTHING_DONE=1
+        echo "${ANSI_MAGENTA}deb ($DEB_ARCHITECTURE)${ANSI_RESET}"
+
+        PUBLISH_LINUX_DEB_CURR="$( echo "$PUBLISH_LINUX_DEB" | sed "s/<DEB_ARCHITECTURE>/$DEB_ARCHITECTURE/g" )"
+
+        rsync --no-g --no-o --progress "dist/$DEB_PACKAGE_CURR" $PUBLISH_LINUX_DEB_CURR || exit 113
+        echo "${ANSI_CYAN}$PUBLISH_LINUX_DEB_CURR${ANSI_RESET}"
+        echo
+    fi
+
+    if [ "$ANYTHING_DONE" -eq 0 ]; then
+        echo "${ANSI_RED}Nothing to publish${ANSI_RESET}" >&2
+        exit 113
+    fi
+}
+
 
 if [ "$1" = "" ]; then ACTIONS="all"; else ACTIONS="$@"; fi
 
 TOKENS=" "
 NEGTOKENS=
 PREREQ_COMPILE=0
+PREREQ_PACKAGE=0
 for ACTION in $ACTIONS; do
     case $ACTION in
-        all)        TOKENS="$TOKENS clean release"   ; PREREQ_COMPILE=1 ;;
-        clean)      TOKENS="$TOKENS clean"                              ;;
-        run)        TOKENS="$TOKENS run"             ; PREREQ_COMPILE=1 ;;
-        debug)      TOKENS="$TOKENS clean debug"     ; PREREQ_COMPILE=1 ;;
-        release)    TOKENS="$TOKENS clean release"   ; PREREQ_COMPILE=1 ;;
+        all)        TOKENS="$TOKENS clean release"                 ; PREREQ_COMPILE=1 ;;
+        clean)      TOKENS="$TOKENS clean"                                            ;;
+        run)        TOKENS="$TOKENS run"                           ; PREREQ_COMPILE=1 ;;
+        debug)      TOKENS="$TOKENS clean debug"                   ; PREREQ_COMPILE=1 ;;
+        release)    TOKENS="$TOKENS clean release"                 ; PREREQ_COMPILE=1 ;;
+        package)    TOKENS="$TOKENS clean release package"         ; PREREQ_COMPILE=1 ; PREREQ_PACKAGE=1 ;;
+        publish)    TOKENS="$TOKENS clean release package publish" ; PREREQ_COMPILE=1 ; PREREQ_PACKAGE=1 ;;
         ~clean)     NEGTOKENS="$NEGTOKENS clean"     ;;
         ~run)       NEGTOKENS="$NEGTOKENS run"       ;;
         ~debug)     NEGTOKENS="$NEGTOKENS debug"     ;;
         ~release)   NEGTOKENS="$NEGTOKENS release"   ;;
+        ~package)   NEGTOKENS="$NEGTOKENS package"   ;;
+        ~publish)   NEGTOKENS="$NEGTOKENS publish"   ;;
         *)         echo "Unknown action $ACTION" >&2 ; exit 113 ;;
     esac
 done
 
 if [ $PREREQ_COMPILE -ne 0 ]; then prereq_compile; fi
+if [ $PREREQ_PACKAGE -ne 0 ]; then prereq_package; fi
 
 NEGTOKENS=$( echo $NEGTOKENS | xargs | tr ' ' '\n' | awk '!seen[$0]++' | xargs )  # remove duplicates
 TOKENS=$( echo $TOKENS | xargs | tr ' ' '\n' | awk '!seen[$0]++' | xargs )  # remove duplicates
@@ -191,6 +369,8 @@ for TOKEN in $TOKENS; do
         run)       make_run       || exit 113 ;;
         debug)     make_debug     || exit 113 ;;
         release)   make_release   || exit 113 ;;
+        package)   make_package   || exit 113 ;;
+        publish)   make_publish   || exit 113 ;;
         *)         echo "Unknown token $TOKEN" >&2 ; exit 113 ;;
     esac
 done
