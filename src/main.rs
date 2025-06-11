@@ -55,6 +55,20 @@ fn main() -> io::Result<()> {
                     std::process::exit(1);
                 }
             }
+            "-h" => {
+                    eprintln!("preclear [-b <blocksize>] [-k <key>] [-s <position>] [-w] path");
+                    eprintln!();
+                    eprintln!("  -b <blocksize>: specifies block size; usually not needed");
+                    eprintln!("  -k <key>:       specifies key; usually not needed");
+                    eprintln!("  -s <position:   position at which to start check; default is start");
+                    eprintln!("  -w:             if set, disk will be filled with random data");
+                    eprintln!("  path:           device path");
+                    eprintln!();
+                    eprintln!("EXAMPLES");
+                    eprintln!("  read/write test: preclear -w /dev/sdz");
+                    eprintln!("  read-only test:  preclear /dev/sdz");
+                    std::process::exit(1);
+            }
             "-k" => {
                 if i + 1 < args.len() {
                     arg_key = Some(args[i + 1].clone());
