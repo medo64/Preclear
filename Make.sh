@@ -56,13 +56,16 @@ if [ "$PROJECT_NAME" = "" ]; then
 fi
 echo "${ANSI_PURPLE}Project name ........: ${ANSI_MAGENTA}$PROJECT_NAME${ANSI_RESET}"
 
+
 GIT_INDEX=$( git rev-list --count HEAD 2>/dev/null )
 if [ "$GIT_INDEX" = "" ]; then GIT_INDEX=0; fi
 
 GIT_HASH=$( git log -n 1 --format=%h 2>/dev/null )
 if [ "$GIT_HASH" = "" ]; then GIT_HASH=alpha; fi
 
-GIT_VERSION=$( git tag --points-at HEAD 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p | sed 's/^v//g' | xargs )
+if [ $HAS_CHANGES -eq 0 ] ; then  # only if there are no changes, check for tag
+    GIT_VERSION=$( git tag --points-at HEAD 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p | sed 's/^v//g' | xargs )
+fi
 if [ "$GIT_VERSION" != "" ]; then
     if [ "$HAS_CHANGES" -eq 0 ]; then
         ASSEMBLY_VERSION_TEXT="$GIT_VERSION"
@@ -86,6 +89,13 @@ else
 fi
 echo "${ANSI_PURPLE}Assembly version ....: ${ANSI_MAGENTA}$ASSEMBLY_VERSION${ANSI_RESET}"
 echo "${ANSI_PURPLE}Assembly version text: ${ANSI_MAGENTA}$ASSEMBLY_VERSION_TEXT${ANSI_RESET}"
+
+
+PROJECT_RUNTIMES=$( cat "$SCRIPT_DIR/.meta" | grep -E "^PROJECT_RUNTIMES:" | sed  -n 1p | cut -d: -sf2- | xargs )
+if [ "$PROJECT_RUNTIMES" = "" ]; then
+    PROJECT_RUNTIMES=current
+fi
+echo "${ANSI_PURPLE}Project runtimes ....: ${ANSI_MAGENTA}$PROJECT_RUNTIMES${ANSI_RESET}"
 
 
 PACKAGE_LINUX_DEB=$( cat "$SCRIPT_DIR/.meta" | grep -E "^PACKAGE_LINUX_DEB:" | sed  -n 1p | cut -d: -sf2- | xargs )
@@ -185,10 +195,11 @@ make_debug() {
     echo "${ANSI_MAGENTA}$(basename $PROJECT_ENTRYPOINT)${ANSI_RESET}"
 
     PROJECT_EXECUTABLE=$( echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' )
+
     mkdir -p "$SCRIPT_DIR/bin"
     cargo build --bins                                                                || exit 113
     cp "$SCRIPT_DIR/target/debug/$PROJECT_NAME" "$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE" || exit 113
-    echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$PROJECT_NAME${ANSI_RESET}"                     || exit 113
+    echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE${ANSI_RESET}"                     || exit 113
 }
 
 make_release() {
@@ -199,11 +210,24 @@ make_release() {
     echo
 
     PROJECT_EXECUTABLE=$( echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' )
+
     mkdir -p "$SCRIPT_DIR/bin"
-    cargo build --release --bins                                                        || exit 113
-    cp "$SCRIPT_DIR/target/release/$PROJECT_NAME" "$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE" || exit 113
-    echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$PROJECT_NAME${ANSI_RESET}"                       || exit 113
-    echo
+    for RUNTIME in $PROJECT_RUNTIMES; do
+        echo "${ANSI_MAGENTA}$RUNTIME${ANSI_RESET}"
+
+        if [ "$RUNTIME" = "current" ]; then
+            cargo build --release --bins                                                        || exit 113
+            cp "$SCRIPT_DIR/target/release/$PROJECT_NAME" "$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE" || exit 113
+            echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE${ANSI_RESET}"
+            echo
+        else
+            mkdir -p "$SCRIPT_DIR/bin/$RUNTIME"
+            cargo build --release --bins --target $RUNTIME                                                        || exit 113
+            cp "$SCRIPT_DIR/target/$RUNTIME/release/$PROJECT_NAME" "$SCRIPT_DIR/bin/$RUNTIME/$PROJECT_EXECUTABLE" || exit 113
+            echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$RUNTIME/$PROJECT_EXECUTABLE${ANSI_RESET}"
+            echo
+        fi
+    done
 }
 
 make_package() {
