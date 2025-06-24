@@ -211,7 +211,7 @@ fn main() -> io::Result<()> {
     } else {
         rand::rng().fill_bytes(&mut key);
     }
-    if arg_write {
+    if arg_write_random {
         // key is only important if write is enabled
         print!("  Key .......: ");
         for (i, byte) in key.iter().enumerate() {
