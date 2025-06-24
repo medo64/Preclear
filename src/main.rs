@@ -19,7 +19,8 @@ const MAX_BLOCK_SIZE: u64 = 128 * 1024 * 1024; // 128 MB
 fn main() -> io::Result<()> {
     let mut arg_key: Option<String> = None;
     let mut arg_verbose = false;
-    let mut arg_write = false;
+    let mut arg_write_random = false;
+    let mut arg_write_zero = false;
     let mut arg_start_at = 0u64;
     let mut arg_block_size = 0u64;
     let mut arg_path: Option<String> = None;
@@ -57,18 +58,18 @@ fn main() -> io::Result<()> {
                 }
             }
             "-h" => {
-                    eprintln!("preclear [-b <blocksize>] [-k <key>] [-s <position>] [-w] path");
-                    eprintln!();
-                    eprintln!("  -b <blocksize>: specifies block size; usually not needed");
-                    eprintln!("  -k <key>:       specifies key; usually not needed");
-                    eprintln!("  -s <position:   position at which to start check; default is start");
-                    eprintln!("  -w:             if set, disk will be filled with random data");
-                    eprintln!("  path:           device path");
-                    eprintln!();
-                    eprintln!("EXAMPLES");
-                    eprintln!("  read/write test: preclear -w /dev/sdz");
-                    eprintln!("  read-only test:  preclear /dev/sdz");
-                    std::process::exit(1);
+                eprintln!("preclear [-b <blocksize>] [-k <key>] [-s <position>] [-w] path");
+                eprintln!();
+                eprintln!("  -b <blocksize>: specifies block size; usually not needed");
+                eprintln!("  -k <key>:       specifies key; usually not needed");
+                eprintln!("  -s <position:   position at which to start check; default is start");
+                eprintln!("  -w:             if set, disk will be filled with random data");
+                eprintln!("  path:           device path");
+                eprintln!();
+                eprintln!("EXAMPLES");
+                eprintln!("  read/write test: preclear -w /dev/sdz");
+                eprintln!("  read-only test:  preclear /dev/sdz");
+                std::process::exit(1);
             }
             "-k" => {
                 if i + 1 < args.len() {
@@ -101,7 +102,10 @@ fn main() -> io::Result<()> {
                 arg_verbose = true;
             }
             "-w" => {
-                arg_write = true;
+                arg_write_random = true;
+            }
+            "-z" => {
+                arg_write_zero = true;
             }
             _ => {
                 if arg_path.is_some() {
@@ -115,6 +119,14 @@ fn main() -> io::Result<()> {
         }
         i += 1;
     }
+
+    if arg_write_random && arg_write_zero {
+        eprintln!(
+            "{}",
+            "Error: cannot write both zero (-z) and random (-w)!".bright_red()
+        );
+    }
+    let arg_write = arg_write_random || arg_write_zero;
 
     let arg_key_binary = if let Some(ref key_str) = arg_key {
         let key_str_clean: String = key_str.chars().filter(|c| *c != '-').collect();
@@ -231,7 +243,9 @@ fn main() -> io::Result<()> {
             let (start, end) = get_block_offset(disk_size, block_size, block_index)?;
 
             let mut buffer_write = vec![0u8; block_size as usize];
-            xts.encrypt_area(&mut buffer_write, block_size as usize, 0, get_tweak_default);
+            if arg_write_random {
+                xts.encrypt_area(&mut buffer_write, block_size as usize, 0, get_tweak_default);
+            }
 
             let to_write = (end - start + 1) as usize;
             let instant_start_time = Instant::now();
@@ -287,7 +301,9 @@ fn main() -> io::Result<()> {
         };
 
         if arg_write {
-            xts.decrypt_area(&mut buffer_data, block_size as usize, 0, get_tweak_default);
+            if arg_write_random {
+                xts.decrypt_area(&mut buffer_data, block_size as usize, 0, get_tweak_default);
+            }
             for (i, &b) in buffer_data[..to_read].iter().enumerate() {
                 if b != 0 {
                     eprintln!(
@@ -319,10 +335,15 @@ fn main() -> io::Result<()> {
 
     println!();
     println!();
-    if arg_write {
+    if arg_write_random {
         println!(
             "{}",
             "Read/write test was completed successfully".bright_green()
+        );
+    } else if arg_write_zero {
+        println!(
+            "{}",
+            "Cleaning disk was completed successfully".bright_green()
         );
     } else {
         println!("{}", "Read test was completed successfully".bright_green());

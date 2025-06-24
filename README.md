@@ -18,8 +18,9 @@ Reads and (optionally) writes bytes to disk in order to find any errors.
 * `-b <size>`: Block size to use for read/write operation
 * `-k <key>`: Key to use to generate random data for write
 * `-s <byte>`: Byte to start operation at
-* `-w`: Before reading, fill disk with random data
 * `-v`: More details
+* `-w`: Before reading, fill disk with random data
+* `-z`: Before reading, fill disk with zeroes
 
 
 ### Exit Coes
