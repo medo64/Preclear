@@ -11,7 +11,8 @@ use std::os::unix::io::AsRawFd;
 use std::time::Instant;
 use xts_mode::{Xts128, get_tweak_default};
 
-const BLKGETSIZE64: u64 = 0x80081272;
+mod ioctl;
+
 const MIN_BLOCK_SIZE: u64 = 1 * 1024 * 1024; // 1 MB
 const MAX_BLOCK_SIZE: u64 = 128 * 1024 * 1024; // 128 MB
 
@@ -362,18 +363,8 @@ fn get_disk_size(device_path: &str) -> io::Result<(u64, u32)> {
     let file = File::open(device_path)?;
     let fd = file.as_raw_fd();
 
-    let mut disk_size: u64 = 0;
-    let ret = unsafe { libc::ioctl(fd, BLKGETSIZE64, &mut disk_size) };
-    if ret != 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    const BLKSSZGET: u64 = 0x1268;
-    let mut sector_size: u32 = 0;
-    let ret = unsafe { libc::ioctl(fd, BLKSSZGET, &mut sector_size) };
-    if ret != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let disk_size: u64 = ioctl::get_device_size_in_bytes(fd)?;
+    let sector_size: u32 = ioctl::get_logical_sector_size(fd)?;
 
     Ok((disk_size, sector_size))
 }
