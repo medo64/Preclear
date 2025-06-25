@@ -160,7 +160,6 @@ fn main() -> io::Result<()> {
         "  Sector size: {}",
         format!("{}", sector_size).bright_cyan()
     );
-    println!();
 
     // figure out block size and count
     let sector_size_effective = if sector_size == 0 { 512 } else { sector_size };
@@ -186,9 +185,6 @@ fn main() -> io::Result<()> {
             format!("{}", block_count).bright_cyan()
         );
         println!("  Block size : {}", format!("{}", block_size).bright_cyan());
-        if !arg_write {
-            println!(); // extra spacing since key is not displayed
-        }
     }
 
     // adjust start index
@@ -225,13 +221,20 @@ fn main() -> io::Result<()> {
             }
         }
         println!();
-        println!();
     }
 
     // setup XTS (//https://docs.rs/xts-mode/latest/xts_mode/)
     let cipher_1 = Aes128::new(GenericArray::from_slice(&key[..16]));
     let cipher_2 = Aes128::new(GenericArray::from_slice(&key[16..]));
     let xts = Xts128::<Aes128>::new(cipher_1, cipher_2);
+
+    if arg_write_random {
+        println!("Randomizing:");
+    } else if arg_write_zero {
+        println!("Cleaning:");
+    } else {
+        println!("Testing:");
+    }
 
     // write bytes
     if arg_write {
@@ -268,7 +271,7 @@ fn main() -> io::Result<()> {
             };
 
             print!(
-                "\r\x1b[2K{}% (wrote {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
+                "\r\x1b[2K  {}% (wrote {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
                 100 * (end + 1) / disk_size,
                 end + 1,
                 instant_speed,
@@ -324,7 +327,7 @@ fn main() -> io::Result<()> {
         };
 
         print!(
-            "\r\x1b[2K{}% (read {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
+            "\r\x1b[2K  {}% (read {} bytes at {:.2} MB/s, {:.2} MB/s overall)",
             100 * (end + 1) / disk_size,
             end + 1,
             instant_speed,
@@ -333,7 +336,6 @@ fn main() -> io::Result<()> {
         io::stdout().flush().unwrap();
     }
 
-    println!();
     println!();
     if arg_write_random {
         println!(
