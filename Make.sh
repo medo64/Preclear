@@ -221,13 +221,38 @@ make_release() {
             echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$PROJECT_EXECUTABLE${ANSI_RESET}"
             echo
         else
-            mkdir -p "$SCRIPT_DIR/bin/$RUNTIME"
+            RUNTIME_SUFFIX=$( get_suffix_from_target $RUNTIME )
+            mkdir -p "$SCRIPT_DIR/bin/$RUNTIME_SUFFIX"
             cargo build --release --bins --target $RUNTIME                                                        || exit 113
-            cp "$SCRIPT_DIR/target/$RUNTIME/release/$PROJECT_NAME" "$SCRIPT_DIR/bin/$RUNTIME/$PROJECT_EXECUTABLE" || exit 113
-            echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$RUNTIME/$PROJECT_EXECUTABLE${ANSI_RESET}"
+            cp "$SCRIPT_DIR/target/$RUNTIME/release/$PROJECT_NAME" "$SCRIPT_DIR/bin/$RUNTIME_SUFFIX/$PROJECT_EXECUTABLE" || exit 113
+            echo "${ANSI_CYAN}$SCRIPT_DIR/bin/$RUNTIME_SUFFIX/$PROJECT_EXECUTABLE${ANSI_RESET}"
             echo
         fi
     done
+}
+
+get_suffix_from_target() {  # runtime
+    TARGET_ARCH=$( echo "$1" | cut -sd- -f1 )
+    TARGET_VENDOR=$( echo "$1" | cut -sd- -f2 )
+    TARGET_OS=$( echo "$1" | cut -sd- -f3 )
+    TARGET_ENV=$( echo "$1" | cut -sd- -f4 )
+
+    TARGET_SUFFIX=$TARGET_OS
+    case $TARGET_ENV in
+        gnu)                                      ;;
+        musl) TARGET_SUFFIX="$TARGET_SUFFIX-musl" ;;
+        *)    TARGET_SUFFIX="$TARGET_SUFFIX"      ;;
+        *) echo "${ANSI_RED}Unknown environment: $TARGET_ENV${ANSI_RESET}" >&2; exit 113 ;;
+    esac
+
+    case $TARGET_ARCH in
+        aarch64) TARGET_SUFFIX="$TARGET_SUFFIX-arm64" ;;
+        i686) TARGET_SUFFIX="$TARGET_SUFFIX-x86" ;;
+        x86_64) TARGET_SUFFIX="$TARGET_SUFFIX-x64" ;;
+        *) echo "${ANSI_RED}Unknown architecture: $TARGET_ARCH${ANSI_RESET}" >&2; exit 113 ;;
+    esac
+
+    echo "$TARGET_SUFFIX"
 }
 
 make_package() {
@@ -246,17 +271,26 @@ make_package() {
     mkdir -p "$SCRIPT_DIR/build/archive"
     find "$SCRIPT_DIR/build/archive" -mindepth 1 -delete
 
-    rsync -a "$SCRIPT_DIR/bin/" "$SCRIPT_DIR/build/archive/" || exit 113
+    mkdir -p "$SCRIPT_DIR/dist"
+    for RUNTIME in $PROJECT_RUNTIMES; do
+        echo "${ANSI_MAGENTA}$RUNTIME${ANSI_RESET}"
 
-    mkdir -p "dist"
+        if [ "$RUNTIME" = "current" ]; then
+            rsync -a "$SCRIPT_DIR/bin/" "$SCRIPT_DIR/build/archive/" || exit 113
+            ARCHIVE_NAME_CURR="$PROJECT_NAME_LOWER-$ASSEMBLY_VERSION_TEXT.tgz"
+            rm "dist/$ARCHIVE_NAME_CURR" 2>/dev/null
+            tar czvf "dist/$ARCHIVE_NAME_CURR" -C "$SCRIPT_DIR/build/archive" . || exit 113
+        else
+            RUNTIME_SUFFIX=$( get_suffix_from_target $RUNTIME )
+            rsync -a "$SCRIPT_DIR/bin/" "$SCRIPT_DIR/build/archive/$RUNTIME_SUFFIX/" || exit 113
+            ARCHIVE_NAME_CURR="$PROJECT_NAME_LOWER-$ASSEMBLY_VERSION_TEXT-$RUNTIME_SUFFIX.tgz"
+            rm "dist/$ARCHIVE_NAME_CURR" 2>/dev/null
+            tar czvf "dist/$ARCHIVE_NAME_CURR" -C "$SCRIPT_DIR/build/archive/$RUNTIME_SUFFIX" . || exit 113
+        fi
 
-    ARCHIVE_NAME_CURR="$PROJECT_NAME_LOWER-$ASSEMBLY_VERSION_TEXT.tgz"
-    rm "dist/$ARCHIVE_NAME_CURR" 2>/dev/null
-
-    tar czvf "dist/$ARCHIVE_NAME_CURR" -C "$SCRIPT_DIR/build/archive" . || exit 113
-
-    echo "${ANSI_CYAN}dist/$ARCHIVE_NAME_CURR${ANSI_RESET}"
-    echo
+        echo "${ANSI_CYAN}dist/$ARCHIVE_NAME_CURR${ANSI_RESET}"
+        echo
+    done
 
     if [ "$PACKAGE_LINUX_DEB" != "" ]; then
         DEB_ARCHITECTURE=amd64
